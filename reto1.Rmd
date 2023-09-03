@@ -1,0 +1,345 @@
+---
+title: "Reto 1 Linear Regression"
+author: "Jorge Pool"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+## Load Dataset
+
+```{r load dataset}
+
+dataPriceHouse<-read.csv("data/reto_precios.csv")
+head(dataPriceHouse)
+```
+
+
+## Description Datasets
+
+```{r description columns}
+colnames(dataPriceHouse)
+
+```
+
+```{r cols inspect}
+dataColsPriceHouse<-dataPriceHouse[,c("id","link","price","price_currency","amenities","age_in_years","bathrooms","cellars","num_floors","parking_lots","num_bedrooms","department_type","m2","final_price","lat","lon","price_square_meter")]
+
+
+```
+
+```{r uniqeu values}
+
+unique(dataColsPriceHouse$price_currency)
+unique(dataColsPriceHouse$department_type)
+unique(dataColsPriceHouse$cellars)
+```
+
+
+
+
+## EDA of Datasets
+
+**Null Values**
+```{r null values}
+(colMeans(is.na(dataColsPriceHouse)))*100
+
+```
+
+```{r filtrando columnas de acuerdo a valores nulos}
+dataColsPriceHouse<-dataPriceHouse[,c("id","link","bathrooms","parking_lots","num_bedrooms","m2","final_price","lat","lon","price_square_meter")]
+
+```
+
+
+```{r distribucion target variable}
+library(ggplot2)
+ggplot(dataColsPriceHouse, aes(x=price_square_meter)) + 
+    geom_histogram(aes(y=..density..),     
+                   binwidth=.5,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666")  
+
+
+```
+
+```{r boxplot price}
+
+ggplot(dataColsPriceHouse,aes(x="x",y=price_square_meter))+geom_boxplot()
+
+```
+### Scatter plots 
+
+```{r boxplots and relations}
+
+ggplot(dataColsPriceHouse, aes(x=m2,y=price_square_meter )) + 
+  geom_point()+
+  geom_smooth(method=lm)
+
+```
+
+### Clusterizacion para asignar zona y a partir de ahi hacer regresiones
+
+
+```{r clusterizacion}
+
+library("fpc")
+library("dbscan")
+kNNdistplot(dataColsPriceHouse[,c("bathrooms","parking_lots","num_bedrooms","m2","final_price")], k = 20  )
+abline(h = 1000, lty = 2)
+
+
+```
+
+```{r cluster dbscan}
+cl<-dbscan(dataColsPriceHouse[,c("bathrooms","parking_lots","num_bedrooms","m2","final_price")],eps=0.4,MinPts = 5)
+
+head(cbind(dataColsPriceHouse,cl$cluster))
+```
+
+## PCA
+
+
+```{r pca data house raw}
+
+library(FactoMineR)
+library(factoextra)
+pca2.nci <- PCA(X = dataColsPriceHouse[,c("bathrooms","parking_lots","num_bedrooms","m2","final_price")], scale.unit = TRUE, ncp = 2, graph = TRUE)
+
+```
+
+
+
+```{r scree pca raw data}
+fviz_eig(pca2.nci, addlabels = TRUE, ylim = c(0, 50))
+```
+
+```{r resultados de pca matrices de todos los resultados}
+var <- get_pca_var(pca2.nci) 
+var
+```
+
+```{r corplot pca raw data}
+library("corrplot") 
+corrplot(var$cos2, is.corr=FALSE)
+```
+
+```{r pca datapoints data raw}
+fviz_pca_ind(pca2.nci)
+```
+
+## Remover outliers
+
+```{r removing outlier}
+
+quartiles <- quantile(dataColsPriceHouse$price_square_meter, probs=c(.25, .75), na.rm = FALSE)
+IQR <- IQR(dataColsPriceHouse$price_square_meter)
+ 
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR 
+ 
+data_no_outlier <- subset(dataColsPriceHouse, dataColsPriceHouse$price_square_meter > Lower & dataColsPriceHouse$price_square_meter < Upper)
+ 
+dim(data_no_outlier)
+
+```
+
+
+### PCA data no outliers
+
+```{r pca data no outliers}
+pca.res <- PCA(X = data_no_outlier[,c("bathrooms","parking_lots","num_bedrooms","m2","final_price")], scale.unit = TRUE, ncp = 2, graph = TRUE)
+```
+
+```{r screeplot dimensiones data no outlier}
+fviz_eig(pca.res, addlabels = TRUE, ylim = c(0, 50))
+```
+
+```{r var data no outlier}
+
+var <- get_pca_var(pca.res) 
+var
+
+```
+```{r corplot datanooutlier}
+corrplot(var$cos2, is.corr=FALSE)
+
+```
+
+### Regression Model
+
+```{r split dataset}
+#semilla para generar numeros aleatorios
+set.seed(123) #permite reproducir los resultados
+sample.size<-floor(0.75*nrow(data_no_outlier))
+train.index<-sample(seq_len(nrow(data_no_outlier)),size=sample.size)
+
+df_train_house<-data_no_outlier[train.index,]
+df_test_house<-data_no_outlier[-train.index,]
+
+```
+
+### Model 1.
+
+Using all columns of feature to building model
+```{r model 1 train}
+
+model1.fit<-lm(price_square_meter~bathrooms+parking_lots+num_bedrooms+m2+final_price,data=df_train_house)
+summary(model1.fit)
+```
+
+
+**Conclusiones 
++ El modelo se puede simplificar num_bedrooms, m2, final_price y el intercepto dato que bathrooms y parking lots son no significativos.
+
++ El $R^2=0.84$ es un buen modelo, podriamos probar la prediccion.
+
+
+
+### Prediction Model 1.
+
+
+```{r model 1 all columns prediction}
+
+head(predict(model1.fit, df_test_house[,], interval = "confidence"), 5)
+
+```
+
+### Diagnostico del modelo
+
+```{r diagnostico del modelo 1}
+
+par(mfrow = c(2,2))
+plot(model1.fit)
+
+```
+
+
+```{r model1  prediction }
+
+head(predict(model1.fit, df_test_house[,], interval = "prediction"), 5)
+
+
+```
+
+### Modelo 2
+
+```{r modelo 2 solo columnas significativas}
+
+model1.fit<-lm(price_square_meter~num_bedrooms+m2+final_price,data=df_train_house)
+summary(model1.fit)
+
+```
+
+## Modelo 3 interaccion entre componentes
+
+```{r modelo 3 ajustando interaccion componentes}
+model3.fit<-lm(log(price_square_meter)~num_bedrooms+m2+m2*parking_lots+final_price+m2*bathrooms,data=df_train_house)
+summary(model3.fit)
+```
+
+### Prediction modelo 3
+
+```{r modelo 3 prediccion}
+
+df_prediccion<-predict(model3.fit, df_test_house[,], interval = "prediction")
+
+
+```
+
+```{r prediccion modelo 3 convert dataframe}
+df_prediccion<-as.data.frame(df_prediccion)
+
+```
+
+```{r conversion prediccion a precio real}
+
+df_prediccion["precio_m2"]<-exp(df_prediccion$fit)
+
+```
+
+
+```{r union dataframe}
+df_prediccion<-cbind(df_prediccion,df_test_house)
+
+```
+
+```{r tabla resultados de prediccion}
+head(df_prediccion[,c("precio_m2","lwr","upr","price_square_meter")])
+```
+
+## GWR for price housing
+
+El modelo de regresion geograficamente ponderado (GWR), explora la relacion espacial con un ancho de banda y un esquema de ponderacion seleccionado.
+
+
+
+```{r libraries for GWR}
+
+library(sf)
+library(sp)
+library(rgdal)
+library(rgeos)
+library(tmap)
+library(tmaptools)
+library(spgwr)
+library(grid)
+library(gridExtra)
+
+
+```
+
+
+### dataset spatial datacoords
+
+```{r spatial data coords}
+
+xy <-df_train_house[,c(10,9)]
+
+spdf_price <- SpatialPointsDataFrame(coords = xy, data = df_train_house,
+                               proj4string = CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+
+
+```
+
+### I Moran Dependencia Espacial
+
+```{r librerias I moran}
+
+library(spatialreg)
+library(spdep)
+```
+
+
+
+
+
+
+
+### GWR Estimando kernel bandwidth
+
+```{r gwr bandwidth}
+coords<-cbind(spdf_price$lon,spdf_price$lat)
+
+GRWbwidth<-gwr.sel(model3.fit,coords = coords,gweight = gwr.Gauss,adapt = TRUE)
+
+```
+
+```{r generando modelo GWR}
+model3.gwr<-gwr(model3.fit, coords = coords, adapt = GRWbwidth, hatmatrix = TRUE)
+model3.gwr
+```
+
+
+```{r ponderacion de los coeficientes en las zonas}
+
+resultados<-as.data.frame(model3.gwr$SDF)
+
+df_train_house["ponderacion"]<-resultados$final_price
+
+gwr.point1<-ggplot(df_train_house, aes(x=lon,y=lat))+geom_point(aes(colour=df_train_house$ponderacion              ))+scale_colour_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0, space = "rgb", na.value = "grey50", guide = "colourbar", guide_legend(title="Coefs"))
+
+gwr.point1
+
+```
+
